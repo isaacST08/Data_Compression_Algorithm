@@ -114,11 +114,11 @@ when measured in bytes.
 
 This algorithm will compare chunks of 7 _semi-unique_ bytes at a time, starting
 from the $0^"th"$ byte of the byte array. First, the initial byte is recorded,
-the algorithm then scans each subsequent byte until a byte of a different
-value is found. At that point, the quantity of the first byte, and it's value,
-are recorded as the _first_ of the _7 byte chunk_, and then the algorithm
-continues for the next byte (the one that ended the sequential streak of the
-first byte). The process is repeated until 7 bytes are found. If the algorithm
+the algorithm then scans each subsequent byte until a byte of a different value
+is found. At that point, the quantity of the first byte, and it's value, are
+recorded as the _first_ of the _7 byte chunk_, and then the algorithm continues
+for the next byte (the one that ended the sequential streak of the first byte).
+The process is repeated until 7, semi-unique, bytes are found. If the algorithm
 comes across a byte that is already present as a previous value in the _7 byte
 chunk_, then it treats it _no differently_ than if it was completely new. The
 algorithm only cares about separating and condensing the sequential streams of
@@ -126,9 +126,20 @@ bytes (bytes that all have the same value and appear in a row). It does not
 care if the _7 byte chunk_ consists of only two different bytes, alternating
 back and forth.
 
+If the input data buffer does not have enough bytes to fill the _7-byte-chunk_,
+then any remaining slots are filled with entries containing a data value of "$mono("0xFF")$"
+and a multiplicity value of 0. This combo of impossible values depicts that
+the end of the data has been reached.
+
 Now that the _7 byte chunk_ has been filled, the algorithm will handle two
-cases differently: 1) When their exists at least one byte that appears three or
-more times in a row, and 2) when there doesn't.
+cases differently:
+#enum(
+  numbering: "1)",
+  indent: 10pt,
+  [When their exists at least one sequential byte that appears with a multiplicity of 3 or more, *or* the 7-byte-chunk
+    has trailing values with multiplicity 0.],
+  [Otherwise.],
+)
 
 In both cases, a header byte will be used to facilitate the decoding process.
 #link(<case1>)[Case 1] will use a full header byte while #link(<case2>)[case 2]
@@ -141,12 +152,12 @@ the sub-algorithm defined in case 2 is used.
 
 The two cased are defined as follows:
 
-== Case 1: 3 or More Sequential Bytes Found<case1>
+== Case 1: Sub-Algorithm 1<case1>
 
 This case occurs when at least one of the bytes in the _7 byte chunk_ occurred
-*three times or more* _sequentially_. Bytes of equal value within the _7 byte
-chunk_ but are immediately preceded and followed by bytes of differing values,
-as well as like bytes that appear in pairs *do not* qualify for this case.
+*three times or more* _sequentially_ #underline[*or*] the number of bytes
+remaining in the input buffer is not enough to fill the _7-byte-chunk_ (i.e.
+EOF).
 
 For example, consider the following streams:
 $
@@ -155,30 +166,40 @@ $ <eq:stream_example_1>
 $
   (mono("0x04"), mono("0x11"), mono("0x04"), mono("0x51"), ...),
 $ <eq:stream_example_2>
+$
+  (mono("0x04"), mono("0x11"), mono("0x04"), mono("0x51")),
+$ <eq:stream_example_3>
 and
 $
   (mono("0x6C"), mono("0x39"), mono("0x6C"), mono("0x6C"), mono("0x44"), ...).
-$ <eq:stream_example_3>
+$ <eq:stream_example_4>
 
 The first stream (@eq:stream_example_1) would include the byte $mono("0x11")$
-with a quantity of *3* as the second byte type of its 7-byte-chunk. This stream
-would qualify for this case.
+with a multiplicity of *3* as the second byte type of its 7-byte-chunk. This
+stream would qualify to use the sub-algorithm of this case.
 
 The second stream (@eq:stream_example_2) would include the byte $mono("0x04")$
-with a quantity of *1* as the first byte type of its 7-byte-chunk, and would
-include the (same) byte $mono("0x04")$ with a quantity of *1* as the third byte
-type of its 7-byte-chunk. This stream would *not* qualify for this conditional
-case (see #link(<case2>)[case 2] where it would qualify).
+with a multiplicity of *1* as the first byte type of its 7-byte-chunk, and
+would include the (same) byte $mono("0x04")$ with a multiplicity of *1* as the
+third byte type of its 7-byte-chunk. This stream would *not* qualify (without
+knowing the hidden bytes) for this conditional case (see #link(<case2>)[case 2]
+where it would qualify).
 
-The third stream (@eq:stream_example_3) would include the byte $mono("0x6C")$
+The third stream (@eq:stream_example_3) (which is the same as the second
+stream, but with more information) would not have enough bytes to fill the
+_7-byte-chunk_ and would thus qualify for this case.
+
+The fourth stream (@eq:stream_example_4) would include the byte $mono("0x6C")$
 with a quantity of *1* as the first byte type of its 7-byte-chunk, the byte
 $mono("0x39")$ with a quantity of *1* as the second byte type, and the byte
 $mono("0x6C")$ with a quantity of *2* as the third byte type of its
 7-byte-chunk. Note how the bytes $mono("0x6C")$ are *not* aggregated into one.
-This stream would *not* qualify
-for this conditional case (see #link(<case2>)[case 2] where it would qualify).
+This stream would *not* qualify for this conditional case (see
+#link(<case2>)[case 2] where it would qualify).
 
 #v(12pt)
+
+=== Header Byte
 
 This case uses a header byte to provide information about the following set of
 bytes. This header byte is a full header byte, meaning that all the bits of the
@@ -203,32 +224,69 @@ $
     "Repeated Byte" \ "Indicators"
   )
   #mannot.annot(<b0>, dy: 1em, dx: -4.3em, leader-connect: (bottom, right), annot-inset: 1pt)[Compression Type Bit]
-  #mannot.annot(<b1>, dy: -0.4pt)[#text(size: 6.1pt, [$1$])]
-  #mannot.annot(<b2>, dy: -0.4pt)[#text(size: 6.1pt, [$2$])]
-  #mannot.annot(<b3>, dy: -0.4pt)[#text(size: 6.1pt, [$3$])]
-  #mannot.annot(<b4>, dy: -0.4pt)[#text(size: 6.1pt, [$4$])]
-  #mannot.annot(<b5>, dy: -0.4pt)[#text(size: 6.1pt, [$5$])]
-  #mannot.annot(<b6>, dy: -0.4pt)[#text(size: 6.1pt, [$6$])]
-  #mannot.annot(<b7>, dy: -0.4pt)[#text(size: 6.1pt, [$7$])]
+  #mannot.annot(<b1>, dy: -0.4pt)[#text(size: 6.1pt, [$0$])]
+  #mannot.annot(<b2>, dy: -0.4pt)[#text(size: 6.1pt, [$1$])]
+  #mannot.annot(<b3>, dy: -0.4pt)[#text(size: 6.1pt, [$2$])]
+  #mannot.annot(<b4>, dy: -0.4pt)[#text(size: 6.1pt, [$3$])]
+  #mannot.annot(<b5>, dy: -0.4pt)[#text(size: 6.1pt, [$4$])]
+  #mannot.annot(<b6>, dy: -0.4pt)[#text(size: 6.1pt, [$5$])]
+  #mannot.annot(<b7>, dy: -0.4pt)[#text(size: 6.1pt, [$6$])]
 $ <eq:case1:headerbyte>
 #v(2em)
 
-The _*Compression Type Bit*_ indicates that the following set of bytes is encoded
-using the case-1 sub-algorithm.
+The _*Compression Type Bit*_ indicates that the following set of bytes is
+encoded using the case-1 sub-algorithm.
 
 Each bit of the _*Repeated Byte Indicators*_ encode whether the byte at that
 positional index is a sequential byte or not.
 
-If the bit at position 1 (on @eq:case1:headerbyte) is set to "$mono("0")$",
-then the byte is an individual byte and does not have any multiplicity.
-Otherwise, if the bit is set to "$mono("1")$", then this indicates that the
-byte _does_ have multiplicity and the pair of bytes at that relative index
-should be considered: The first byte of the pair is the actual value of the
-byte. The second byte of the pair is the number of times this byte appears
-sequentially in the original data. This repeats for all the other indices of
-_repeated bit indicators_.
+If the bit at position 0 (on @eq:case1:headerbyte) is set to "$mono("0")$",
+then the byte is an individual byte and does not have any multiplicity
+($M_"ultiplicity"<= 1$). Otherwise, if the bit is set to "$mono("1")$", then
+this indicates that the byte _does_ have multiplicity ($M_"ultiplicity">= 2$)
+and the pair of bytes at that relative index should be considered: The first
+byte of the pair is the data value of the byte. The second byte of the pair is
+the number of times this byte appears sequentially in the original data. This
+repeats for all the other indices of _repeated byte indicators_. This is
+repeated for every index of the _7-byte-chunk_.
 
-For example, the stream
+=== Encoding
+
+Data bytes are encoded depending on their multiplicity as well as if there are
+more bytes to follow.
+
+For each byte instance from the _7-byte-chunk_, if the byte has a multiplicity
+of 2 or greater, then the bit at its index inside the header byte
+(@eq:case1:headerbyte) is set to "$mono("1")$" and is encoded as a pair of
+bytes where the first byte is the data value and the second byte is its
+multiplicity minus 2 (since this is the minimum value for this pair format). If
+the byte instance instead has a multiplicity exactly 1, then the bit at its
+index inside the header byte (@eq:case1:headerbyte) is set to "$mono("0")$" and
+is encoded as a solo byte representing just the data value. If the byte
+instance has a multiplicity of 0 (i.e. it does not exist and indicates the end
+of the source data buffer) then it is excluded and not encoded into the output
+buffer.
+
+Since the input data values only range from $mono("0x00")$ to $mono("0x7F")$,
+this means that the top high order bit is always set to "$mono("0")$" for every
+encoded data byte. Since this bit can is not important to the actual data
+value, we instead will use it to indicate whether there is another data byte to
+follow (whether it's a pair or solo), or if the end of the buffer has been
+reached. If there is a data byte to follow the current data byte, then this top
+bit is set to "$mono("1")$", if there is not a byte to follow, then this top
+bit is set to "$mono("0")$". If the current data byte (pair or solo) is the
+7#super([th]) and final data byte, then this top high order bit is ignored.
+
+Note: There will never be a case where a 7-byte-chunk consists of all void
+bytes, thus we do not need to worry about the first byte not existing (i.e.
+each byte set will always include at least one data byte).
+
+
+
+
+=== Encoding Example
+
+As an example, the stream
 $
   (
     mono("0x03"),
@@ -239,7 +297,7 @@ $
     mono("0x00"), mono("0x00"), mono("0x00"), mono("0x00"), mono("0x00"),
     mono("0x56")
   )
-$ <eq:stream_example_4>
+$ <eq:stream_example_5>
 would become the _7-byte-chunk_ represented by the array of 2-tuples where the
 first value of each 2-tuple represents the byte value, and the second value
 represents the multiplicity of that byte (the number of times it occurred in a
@@ -254,9 +312,9 @@ $
     ( mono("0x64"), 4 ),
     ( mono("0x00"), 5 ),
     ( mono("0x56"), 1 )
-  )
+  ).
 $<eq:7_byte_chunk_1>
-when encoded back into a byte array, using this algorithm, we would get:
+When encoded back into a byte array, using this algorithm, we would get:
 $
   (
     mono("0b00011110"),
@@ -275,7 +333,7 @@ stream of data was 16 bytes in length. That's a 25% decrease, and thus a
 successful compression.
 
 You may notice that in the compressed stream of bytes (@eq:compressed_bytes_1)
-that the multiplicity bytes do not match the values found in the corresponding
+that the _multiplicity bytes_ do not match the values found in the corresponding
 7-byte-chunk (@eq:7_byte_chunk_1). In fact, they are all a value of 2 lower
 than what might have been expected. This is because in the header byte, we
 already indicate when a pair of bytes will be present, and this only occurs
@@ -327,16 +385,22 @@ This case occurs when all the bytes in the _7-byte-chunk_ are of multiplicity
 
 Since there are no sequential bytes from the 7-byte-chunk that can be
 compressed by encoding their multiplicity, this sub-algorithm uses the fact
-that the data value from every byte of the source data is only from
-$mono("0x00")$ to $mono("0x7F")$ to _condense_ the data by removing the unused
+that every data byte of the source data has values from
+$mono("0x00")$ to only $mono("0x7F")$ to _condense_ the data by removing the unused
 high-order-bit from every data byte. This sub-algorithm becomes more efficient
 when it can condense more bytes at once so it can aggregate all the "saved"
 high-order-bits together into the saving of an entire byte. To do this, after
 meeting the condition for using this sub-algorithm from the contents of the
-_7-byte-chunk_, it will look more bytes ahead to determine if there are more
+_7-byte-chunk_, it will look for additional bytes _past_ those in the
+7-byte-chunk to determine if there are more
 bytes with a multiplicity of less than three that can be encoded into this
-byte set with the desired result of saving an entire byte.
+byte set with the desired result of saving an entire byte. Since there are
+only certain multiples of bytes that result in saving whole bytes, the number
+of bytes additionally collected into this encoding are specifically chosen
+and are outlined #link(<tbl:extension_codes>)[below].
 
+
+=== Header Byte
 
 Like case 1, this case also uses a header byte to provide information about the
 following set of bytes. This header byte is a _partial_ header byte, meaning
@@ -378,21 +442,23 @@ $
 $ <eq:case2:headerbyte>
 #v(2em)
 
-The _*Compression Type Bit*_ indicates that the following set of bytes is encoded
-using the case-2 sub-algorithm.
+The _*Compression Type Bit*_ indicates that the following set of bytes is
+encoded using the _case-2 sub-algorithm_.
 
-The _*Extension Code*_ is the encoding that indicates how many _extra_ bytes will
-be included in this byte set. Since only certain quantities of input bytes
+The _*Extension Code*_ is the encoding that indicates how many _extra_ bytes
+will be included in this byte set. Since only certain quantities of input bytes
 accumulate to result in saving a whole byte, these encodings map to specific
 values (#link(<tbl:extension_codes>)[see below]).
 
-The _*Data Bits*_ are the hight order bits of the first byte of data that is
-encoded of the following byte sequence.
+The _*Data Bits*_ are the initial bits of the compressed bytes from the
+original data. That is, the high order bits of the first byte of the
+7-byte-chunk, excluding the first bit that is uniformly "$mono("0")$" among all
+the source data bytes.
 
 // #v(12pt)
 
 
-=== Extension Codes<tbl:extension_codes>
+==== Extension Codes<tbl:extension_codes>
 #align(center, {
   set par(justify: false)
   box(
@@ -458,8 +524,48 @@ encoded of the following byte sequence.
 })
 
 
-=== Encoding
+=== Encoding Example
 
+==== Example 1
+
+Consider the input byte array of
+$
+   ( quad & \
+          & mono("0x03"), mono("0x74"), mono("0x04"), mono("0x1A"), \
+          & mono("0x1A"), mono("0x35"), mono("0x64"), mono("0x00"), \
+  ). quad &
+$ <eq:stream_example_6>
+
+From this, the first _7-byte-chunk_ of 2-tuples (_value_, _multiplicity_) would be
+constructed as:
+$
+  (
+    ( mono("0x03"), 1 ),
+    ( mono("0x74"), 1 ),
+    ( mono("0x04"), 1 ),
+    ( mono("0x1A"), 2 ),
+    ( mono("0x35"), 1 ),
+    ( mono("0x64"), 1 ),
+    ( mono("0x00"), 5 ),
+    ( mono("0x56"), 1 )
+  ).
+$<eq:7_byte_chunk_2>
+
+Since no byte instance of the _7-byte-chunk_ (@eq:7_byte_chunk_2) has a
+multiplicity of 3 or greater, this byte set qualifies for this case.
+
+==== Example 2
+
+
+$
+   ( quad & \
+          & mono("0x03"), mono("0x74"), mono("0x04"), mono("0x1A"), \
+          & mono("0x1A"), mono("0x35"), mono("0x64"), mono("0x00"), \
+          & mono("0x35"), mono("0x35"), mono("0x56"), mono("0x0C"), \
+          & mono("0x1B"), mono("0x1B"), mono("0x1B"), mono("0x0C"), \
+          & mono("0x1B") \
+  ). quad &
+$ <eq:stream_example_7>
 
 
 
