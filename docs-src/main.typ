@@ -79,12 +79,42 @@ not be altered, and the trailing space --- the space saved by the compression
 + The compressed data needs to be decompressable. A accompanying function that
   will decompress the data must exist.
 
+== Goals
+
+The first goal of this algorithm will be to compress the data by utilizing the
+fact that it can be commonly expected that bytes will appear multiple times
+sequentially. The main tactic will be to condense repeated sequential bytes
+into an encoding of two bytes where the first byte is the original value and
+the second byte is the number of times in a row that byte was repeated.
+
+The second goal will be that, even in the worse case scenario, this algorithm
+will *not* increase the length of the data and at worst will result in a
+compressed data length equal to the inputted data length ($mono("data_size")$)
+when measured in bytes.
+
+
+= Terms and Definitions
+
+/ Sequential Byte: A _sequential byte_ is a set of bytes in a stream that
+  appears twice or more in a row with the exact same value. An instance of a
+  byte that appears twice or more in a row is called _sequential_.
+
+/ Byte Multiplicity: When an instance of a byte is sequential, its _multiplicity_
+  is the _number of times_ that byte appears in a row. In the byte stream
+  $(mono("0x64"), mono("0x4A"), mono("0x64"), mono("0x64"), mono("0x64"))$,
+  the second instance of the byte $mono("0x64")$ has a _multiplicity_ of *3*.
+  A byte that is _not sequential_ has a _multiplicity_ of *1*.
+
+/ Semi-Unique Byte Set: A set of bytes where order matters and each byte may
+  appear more than once, but not more than once in a row.
+
+
 
 = Algorithm
 
 This algorithm will compare chunks of 7 _semi-unique_ bytes at a time, starting
 from the $0^"th"$ byte of the byte array. First, the initial byte is recorded,
-the algorithm then scans the each subsequent byte until a byte of a different
+the algorithm then scans each subsequent byte until a byte of a different
 value is found. At that point, the quantity of the first byte, and it's value,
 are recorded as the _first_ of the _7 byte chunk_, and then the algorithm
 continues for the next byte (the one that ended the sequential streak of the
@@ -111,7 +141,7 @@ the sub-algorithm defined in case 2 is used.
 
 The two cased are defined as follows:
 
-== Case 1: 3 or More Sequential Bytes Found <case1>
+== Case 1: 3 or More Sequential Bytes Found<case1>
 
 This case occurs when at least one of the bytes in the _7 byte chunk_ occurred
 *three times or more* _sequentially_. Bytes of equal value within the _7 byte
@@ -151,9 +181,9 @@ for this conditional case (see #link(<case2>)[case 2] where it would qualify).
 #v(12pt)
 
 This case uses a header byte to provide information about the following set of
-bytes. This header byte is a full header byte, meaning that all of the bits of
-the header are used to convey information other than the data. This header byte
-has the following encoding:
+bytes. This header byte is a full header byte, meaning that all the bits of the
+header are used to convey information other than the data. This header byte has
+the following encoding:
 
 #v(0.5em)
 $
@@ -183,10 +213,11 @@ $
 $ <eq:case1:headerbyte>
 #v(2em)
 
-The _Compression Type Bit_ indicates that is following set of bytes is encoded
-using the sub-algorithm of this case. Each bit of the _Repeated Byte
-Indicators_ encode whether the byte at that positional index is a sequential
-encoded byte or not.
+The _*Compression Type Bit*_ indicates that the following set of bytes is encoded
+using the case-1 sub-algorithm.
+
+Each bit of the _*Repeated Byte Indicators*_ encode whether the byte at that
+positional index is a sequential byte or not.
 
 If the bit at position 1 (on @eq:case1:headerbyte) is set to "$mono("0")$",
 then the byte is an individual byte and does not have any multiplicity.
@@ -194,7 +225,8 @@ Otherwise, if the bit is set to "$mono("1")$", then this indicates that the
 byte _does_ have multiplicity and the pair of bytes at that relative index
 should be considered: The first byte of the pair is the actual value of the
 byte. The second byte of the pair is the number of times this byte appears
-sequentially in the original data.
+sequentially in the original data. This repeats for all the other indices of
+_repeated bit indicators_.
 
 For example, the stream
 $
@@ -221,7 +253,7 @@ $
     ( mono("0x35"), 2 ),
     ( mono("0x64"), 4 ),
     ( mono("0x00"), 5 ),
-    ( mono("0x56"), 1 ),
+    ( mono("0x56"), 1 )
   )
 $<eq:7_byte_chunk_1>
 when encoded back into a byte array, using this algorithm, we would get:
@@ -252,12 +284,185 @@ multiplicity byte to start counting at 2 (represented by the value 0) so that
 we can store a byte with a multiplicity of up to 257 instead of only up to a
 multiplicity of 255; slightly increasing our potential for compression.
 
+=== Worst Case Scenario
+
+For this case of the algorithm to run, the _7-byte-chunk_ must at least have
+one sequential byte with a multiplicity of 3. In the worst case scenario, there
+is one singular byte with a multiplicity of 3, and all other bytes have a
+multiplicity of 1 or 2.
+
+The first byte outputted is the header info byte, this increases the output
+buffer length by 1.
+
+For all the bytes of multiplicity 1, they are not encoded, and their byte is
+simply re-added to the stream at their appropriate index. Thus, for each of
+these bytes, the length of the output remains the same.
+
+For all the bytes of multiplicity 2, they first output the byte of their own
+value, then followed by the byte encoding the quantity of bytes condensed.
+Since two bytes were encoded back into two bytes, the length of the output
+remains the same.
+
+For the singular byte of multiplicity 3, this byte is encoded just the same as
+was done for bytes of multiplicity 2, except the quantity byte has a value of
+\3. Thus, we encoded 3 bytes from the input down to 2 bytes in the output,
+resulting in an output buffer length decrease of 1.
+
+The decrease of 1 byte from the singular multiplicity 3 byte counteracts the
+increase of 1 byte from the header info byte, resulting in a final output
+buffer length equal to that of the input buffer length.
+
+Thus, even in the worse case scenario, this component of the algorithm does not
+produce a compressed data buffer with a length greater than the uncompressed
+data buffer.
 
 
 
 
 
-== Case 2: 2 or Less Sequential Bytes Found <case2>
+== Case 2: 2 or Less Sequential Bytes Found<case2>
 
-In the
+This case occurs when all the bytes in the _7-byte-chunk_ are of multiplicity
+1 or 2.
+
+Since there are no sequential bytes from the 7-byte-chunk that can be
+compressed by encoding their multiplicity, this sub-algorithm uses the fact
+that the data value from every byte of the source data is only from
+$mono("0x00")$ to $mono("0x7F")$ to _condense_ the data by removing the unused
+high-order-bit from every data byte. This sub-algorithm becomes more efficient
+when it can condense more bytes at once so it can aggregate all the "saved"
+high-order-bits together into the saving of an entire byte. To do this, after
+meeting the condition for using this sub-algorithm from the contents of the
+_7-byte-chunk_, it will look more bytes ahead to determine if there are more
+bytes with a multiplicity of less than three that can be encoded into this
+byte set with the desired result of saving an entire byte.
+
+
+Like case 1, this case also uses a header byte to provide information about the
+following set of bytes. This header byte is a _partial_ header byte, meaning
+that a portion of the bits are used to encode information, and the rest are
+used to store data.
+
+This header byte is encoded as follows:
+#v(1.5em)
+$
+  #let bit(val) = box(width: 8pt, height: 9pt, {
+    place(center + bottom, dy: -0.4pt, if (val == none) [] else [$mono(#str(val))$])
+    place(bottom + center, dy: 1pt, line(length: 5.5pt, stroke: (cap: "round", thickness: 0.9pt)))
+  })
+  mannot.mark(#bit(1), tag: #<b0>, outset: #2pt)
+  overbrace(
+    mannot.mark(#bit(none), tag: #<b1>, outset: #2pt)
+    mannot.mark(#bit(none), tag: #<b2>, outset: #2pt),
+    #place(center + bottom, text([Extension \ Code]))
+  )
+  mannot.markrect(
+    mannot.mark(#bit(none), tag: #<b3>, outset: #2pt)
+    mannot.mark(#bit(none), tag: #<b4>, outset: #2pt)
+    mannot.mark(#bit(none), tag: #<b5>, outset: #2pt)
+    mannot.mark(#bit(none), tag: #<b6>, outset: #2pt)
+    mannot.mark(#bit(none), tag: #<b7>, outset: #2pt),
+    tag: #<data_bits>,
+    outset: #(x: 0pt, bottom: 3pt, top: 1.4pt),
+    color: #blue,
+  )
+  #mannot.annot(<b0>, dy: 1em, dx: -4.3em, leader-connect: (bottom, right), annot-inset: 1pt)[Compression Type Bit]
+  #mannot.annot(<b1>, dy: -0.4pt)[#text(size: 6.1pt, [$0$])]
+  #mannot.annot(<b2>, dy: -0.4pt)[#text(size: 6.1pt, [$1$])]
+  #mannot.annot(<data_bits>, dy: -3em, dx: 2.6em, leader-connect: (top, left), annot-inset: 1pt)[Data Bits]
+  // #mannot.annot(<b3>, dy: -0.4pt)[#text(size: 6.1pt, [$3$])]
+  // #mannot.annot(<b4>, dy: -0.4pt)[#text(size: 6.1pt, [$4$])]
+  // #mannot.annot(<b5>, dy: -0.4pt)[#text(size: 6.1pt, [$5$])]
+  // #mannot.annot(<b6>, dy: -0.4pt)[#text(size: 6.1pt, [$6$])]
+  // #mannot.annot(<b7>, dy: -0.4pt)[#text(size: 6.1pt, [$7$])]
+$ <eq:case2:headerbyte>
+#v(2em)
+
+The _*Compression Type Bit*_ indicates that the following set of bytes is encoded
+using the case-2 sub-algorithm.
+
+The _*Extension Code*_ is the encoding that indicates how many _extra_ bytes will
+be included in this byte set. Since only certain quantities of input bytes
+accumulate to result in saving a whole byte, these encodings map to specific
+values (#link(<tbl:extension_codes>)[see below]).
+
+The _*Data Bits*_ are the hight order bits of the first byte of data that is
+encoded of the following byte sequence.
+
+// #v(12pt)
+
+
+=== Extension Codes<tbl:extension_codes>
+#align(center, {
+  set par(justify: false)
+  box(
+    width: 90%,
+    table(
+      columns: (3.7em, 3.7em, 3.9em, 4.6em, 5.0em, auto),
+      align: center + horizon,
+      fill: (x, y) => if (y < 2) { rgb("#BBDDD1").lighten(5%) },
+
+      table.header(
+        level: 1,
+        table.cell([Extension Code], colspan: 2),
+        table.cell([\# Input Bytes], rowspan: 2),
+        table.cell([\# Output Bytes], rowspan: 2),
+        table.cell([Trailing Spare Bits], rowspan: 2),
+        table.cell([Explanation], rowspan: 2),
+        [Bit 0],
+        [Bit 1],
+      ),
+
+      [$mono("0")$],
+      [$mono("0")$],
+      [7],
+      [7],
+      [4],
+      [
+        This is the default encoding. This is the encoding that insures that
+        this algorithm does not increase the number of bytes in the resulting
+        output buffer compared to the length of the input buffer.
+      ],
+
+      [$mono("0")$],
+      [$mono("1")$],
+      [11],
+      [10],
+      [0],
+      [
+        This is the number of input bytes required to save *1* whole byte in the
+        output.
+      ],
+
+      [$mono("1")$],
+      [$mono("0")$],
+      [18],
+      [16],
+      [0],
+      [
+        This is the number of input bytes required to save *2* whole bytes in the
+        output.
+      ],
+
+      [$mono("1")$],
+      [$mono("1")$],
+      [25],
+      [22],
+      [0],
+      [
+        This is the number of input bytes required to save *3* whole bytes in the
+        output.
+      ],
+    ),
+  )
+})
+
+
+=== Encoding
+
+
+
+
+
+
 
