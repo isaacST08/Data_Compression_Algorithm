@@ -1,4 +1,6 @@
 #import "@preview/mannot:0.3.1"
+#import "@preview/wrap-it:0.1.1": wrap-content
+#import "@preview/fletcher:0.5.8" as fletcher: cetz, diagram, edge, node
 
 #set page(margin: (x: 18mm, y: 18mm), numbering: "1", paper: "a4")
 #set math.equation(numbering: "(1)", supplement: "Eq.")
@@ -6,6 +8,8 @@
 #set heading(numbering: "1.1")
 
 #show link: set text(fill: rgb(0, 110, 210))
+
+#show figure.caption: emph
 
 #show "7 byte chunk": "7-byte-chunk"
 
@@ -76,7 +80,7 @@ not be altered, and the trailing space --- the space saved by the compression
   contain a number from $0$ to $127$ ($mono("0x00")$ to $mono("0x7F")$).
   Additionally, it is common for the data in the buffer to have the same value
   repeated multiple times in a row.
-+ The compressed data needs to be decompressable. A accompanying function that
++ The compressed data needs to be decompressable. An accompanying function that
   will decompress the data must exist.
 
 == Goals
@@ -84,8 +88,8 @@ not be altered, and the trailing space --- the space saved by the compression
 The first goal of this algorithm will be to compress the data by utilizing the
 fact that it can be commonly expected that bytes will appear multiple times
 sequentially. The main tactic will be to condense repeated sequential bytes
-into an encoding of two bytes where the first byte is the original value and
-the second byte is the number of times in a row that byte was repeated.
+into an encoding of two bytes pairs where the first byte is the original value
+and the second byte is the number of times in a row that byte was repeated.
 
 The second goal will be that, even in the worse case scenario, this algorithm
 will *not* increase the length of the data and at worst will result in a
@@ -99,11 +103,12 @@ when measured in bytes.
   appears twice or more in a row with the exact same value. An instance of a
   byte that appears twice or more in a row is called _sequential_.
 
-/ Byte Multiplicity: When an instance of a byte is sequential, its _multiplicity_
-  is the _number of times_ that byte appears in a row. In the byte stream
-  $(mono("0x64"), mono("0x4A"), mono("0x64"), mono("0x64"), mono("0x64"))$,
-  the second instance of the byte $mono("0x64")$ has a _multiplicity_ of *3*.
-  A byte that is _not sequential_ has a _multiplicity_ of *1*.
+/ Byte Multiplicity: When an instance of a byte is sequential, its
+  _multiplicity_ is the _number of times_ that byte appears in a row. In the
+  byte stream $(mono("0x64"), mono("0x4A"), mono("0x64"), mono("0x64"),
+    mono("0x64"))$, the second instance of the byte $mono("0x64")$ has a
+  _multiplicity_ of *3*. A byte that is _not sequential_ has a _multiplicity_
+  of *1*.
 
 / Semi-Unique Byte Set: A set of bytes where order matters and each byte may
   appear more than once, but not more than once in a row.
@@ -112,463 +117,505 @@ when measured in bytes.
 
 = Algorithm
 
-This algorithm will compare chunks of 7 _semi-unique_ bytes at a time, starting
-from the $0^"th"$ byte of the byte array. First, the initial byte is recorded,
-the algorithm then scans each subsequent byte until a byte of a different value
-is found. At that point, the quantity of the first byte, and it's value, are
-recorded as the _first_ of the _7 byte chunk_, and then the algorithm continues
-for the next byte (the one that ended the sequential streak of the first byte).
-The process is repeated until 7, semi-unique, bytes are found. If the algorithm
-comes across a byte that is already present as a previous value in the _7 byte
-chunk_, then it treats it _no differently_ than if it was completely new. The
-algorithm only cares about separating and condensing the sequential streams of
-bytes (bytes that all have the same value and appear in a row). It does not
-care if the _7 byte chunk_ consists of only two different bytes, alternating
-back and forth.
-
-If the input data buffer does not have enough bytes to fill the _7-byte-chunk_,
-then any remaining slots are filled with entries containing a data value of "$mono("0xFF")$"
-and a multiplicity value of 0. This combo of impossible values depicts that
-the end of the data has been reached.
-
-Now that the _7 byte chunk_ has been filled, the algorithm will handle two
-cases differently:
-#enum(
-  numbering: "1)",
-  indent: 10pt,
-  [When their exists at least one sequential byte that appears with a multiplicity of 3 or more, *or* the 7-byte-chunk
-    has trailing values with multiplicity 0.],
-  [Otherwise.],
-)
-
-In both cases, a header byte will be used to facilitate the decoding process.
-#link(<case1>)[Case 1] will use a full header byte while #link(<case2>)[case 2]
-will use a partial header byte (details explained below). Despite their
-differences, the two cases use a single high order bit to declare to the
-decoder which type of compression was used for the following block of bytes. A
-high order bit of value "$mono("0")$" indicates that the sub-algorithm defined
-in case 1 is used, while a high order bit of value "$mono("1")$" indicates that
-the sub-algorithm defined in case 2 is used.
-
-The two cased are defined as follows:
-
-== Case 1: Sub-Algorithm 1<case1>
-
-This case occurs when at least one of the bytes in the _7 byte chunk_ occurred
-*three times or more* _sequentially_ #underline[*or*] the number of bytes
-remaining in the input buffer is not enough to fill the _7-byte-chunk_ (i.e.
-EOF).
-
-For example, consider the following streams:
-$
-  (mono("0x04"), mono("0x11"), mono("0x11"), mono("0x11"), ...),
-$ <eq:stream_example_1>
-$
-  (mono("0x04"), mono("0x11"), mono("0x04"), mono("0x51"), ...),
-$ <eq:stream_example_2>
-$
-  (mono("0x04"), mono("0x11"), mono("0x04"), mono("0x51")),
-$ <eq:stream_example_3>
-and
-$
-  (mono("0x6C"), mono("0x39"), mono("0x6C"), mono("0x6C"), mono("0x44"), ...).
-$ <eq:stream_example_4>
-
-The first stream (@eq:stream_example_1) would include the byte $mono("0x11")$
-with a multiplicity of *3* as the second byte type of its 7-byte-chunk. This
-stream would qualify to use the sub-algorithm of this case.
-
-The second stream (@eq:stream_example_2) would include the byte $mono("0x04")$
-with a multiplicity of *1* as the first byte type of its 7-byte-chunk, and
-would include the (same) byte $mono("0x04")$ with a multiplicity of *1* as the
-third byte type of its 7-byte-chunk. This stream would *not* qualify (without
-knowing the hidden bytes) for this conditional case (see #link(<case2>)[case 2]
-where it would qualify).
-
-The third stream (@eq:stream_example_3) (which is the same as the second
-stream, but with more information) would not have enough bytes to fill the
-_7-byte-chunk_ and would thus qualify for this case.
-
-The fourth stream (@eq:stream_example_4) would include the byte $mono("0x6C")$
-with a quantity of *1* as the first byte type of its 7-byte-chunk, the byte
-$mono("0x39")$ with a quantity of *1* as the second byte type, and the byte
-$mono("0x6C")$ with a quantity of *2* as the third byte type of its
-7-byte-chunk. Note how the bytes $mono("0x6C")$ are *not* aggregated into one.
-This stream would *not* qualify for this conditional case (see
-#link(<case2>)[case 2] where it would qualify).
-
-#v(12pt)
-
-=== Header Byte
-
-This case uses a header byte to provide information about the following set of
-bytes. This header byte is a full header byte, meaning that all the bits of the
-header are used to convey information other than the data. This header byte has
-the following encoding:
-
-#v(0.5em)
-$
-  #let bit(val) = box(width: 8pt, height: 9pt, {
-    place(center + bottom, dy: -0.4pt, if (val == none) [] else [$mono(#str(val))$])
-    place(bottom + center, dy: 1pt, line(length: 5.5pt, stroke: (cap: "round", thickness: 0.9pt)))
-  })
-  mannot.mark(#bit(0), tag: #<b0>, outset: #2pt)
-  overbrace(
-    mannot.mark(#bit(none), tag: #<b1>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b2>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b3>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b4>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b5>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b6>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b7>, outset: #2pt),
-    "Repeated Byte" \ "Indicators"
-  )
-  #mannot.annot(<b0>, dy: 1em, dx: -4.3em, leader-connect: (bottom, right), annot-inset: 1pt)[Compression Type Bit]
-  #mannot.annot(<b1>, dy: -0.4pt)[#text(size: 6.1pt, [$0$])]
-  #mannot.annot(<b2>, dy: -0.4pt)[#text(size: 6.1pt, [$1$])]
-  #mannot.annot(<b3>, dy: -0.4pt)[#text(size: 6.1pt, [$2$])]
-  #mannot.annot(<b4>, dy: -0.4pt)[#text(size: 6.1pt, [$3$])]
-  #mannot.annot(<b5>, dy: -0.4pt)[#text(size: 6.1pt, [$4$])]
-  #mannot.annot(<b6>, dy: -0.4pt)[#text(size: 6.1pt, [$5$])]
-  #mannot.annot(<b7>, dy: -0.4pt)[#text(size: 6.1pt, [$6$])]
-$ <eq:case1:headerbyte>
-#v(2em)
-
-The _*Compression Type Bit*_ indicates that the following set of bytes is
-encoded using the case-1 sub-algorithm.
-
-Each bit of the _*Repeated Byte Indicators*_ encode whether the byte at that
-positional index is a sequential byte or not.
-
-If the bit at position 0 (on @eq:case1:headerbyte) is set to "$mono("0")$",
-then the byte is an individual byte and does not have any multiplicity
-($M_"ultiplicity"<= 1$). Otherwise, if the bit is set to "$mono("1")$", then
-this indicates that the byte _does_ have multiplicity ($M_"ultiplicity">= 2$)
-and the pair of bytes at that relative index should be considered: The first
-byte of the pair is the data value of the byte. The second byte of the pair is
-the number of times this byte appears sequentially in the original data. This
-repeats for all the other indices of _repeated byte indicators_. This is
-repeated for every index of the _7-byte-chunk_.
-
-=== Encoding
-
-Data bytes are encoded depending on their multiplicity as well as if there are
-more bytes to follow.
-
-For each byte instance from the _7-byte-chunk_, if the byte has a multiplicity
-of 2 or greater, then the bit at its index inside the header byte
-(@eq:case1:headerbyte) is set to "$mono("1")$" and is encoded as a pair of
-bytes where the first byte is the data value and the second byte is its
-multiplicity minus 2 (since this is the minimum value for this pair format). If
-the byte instance instead has a multiplicity exactly 1, then the bit at its
-index inside the header byte (@eq:case1:headerbyte) is set to "$mono("0")$" and
-is encoded as a solo byte representing just the data value. If the byte
-instance has a multiplicity of 0 (i.e. it does not exist and indicates the end
-of the source data buffer) then it is excluded and not encoded into the output
-buffer.
-
-Since the input data values only range from $mono("0x00")$ to $mono("0x7F")$,
-this means that the top high order bit is always set to "$mono("0")$" for every
-encoded data byte. Since this bit can is not important to the actual data
-value, we instead will use it to indicate whether there is another data byte to
-follow (whether it's a pair or solo), or if the end of the buffer has been
-reached. If there is a data byte to follow the current data byte, then this top
-bit is set to "$mono("1")$", if there is not a byte to follow, then this top
-bit is set to "$mono("0")$". If the current data byte (pair or solo) is the
-7#super([th]) and final data byte, then this top high order bit is ignored.
-
-Note: There will never be a case where a 7-byte-chunk consists of all void
-bytes, thus we do not need to worry about the first byte not existing (i.e.
-each byte set will always include at least one data byte).
+This algorithm will evaluate sequential bytes one at a time and encode them.
 
 
+First, for all the bytes in the input buffer, the algorithm will group each
+byte into a pair of values: The value of the byte itself, and the number of
+times that byte appeared in a row --- its _multiplicity_. If the same byte
+appears multiple times but is separated by one or more bytes of a different
+value, then those same-bytes are treated as different _instances_ of that byte.
 
-
-=== Encoding Example
-
-As an example, the stream
+For example, consider the following input data buffer:
 $
   (
     mono("0x03"),
     mono("0x74"),
-    mono("0x04"), mono("0x04"),
-    mono("0x35"), mono("0x35"),
+    mono("0x1A"), mono("0x1A"),
     mono("0x64"), mono("0x64"), mono("0x64"), mono("0x64"),
     mono("0x00"), mono("0x00"), mono("0x00"), mono("0x00"), mono("0x00"),
-    mono("0x56")
-  )
-$ <eq:stream_example_5>
-would become the _7-byte-chunk_ represented by the array of 2-tuples where the
-first value of each 2-tuple represents the byte value, and the second value
-represents the multiplicity of that byte (the number of times it occurred in a
-row). The position of the 2-tuple in the array represents position of that byte
-relative to the other 2-tuples in the _7-byte-chunk_. As follows:
+    mono("0x1A")
+  ).
+$ <eq:stream_example_1>
+
+This would become the array of 2-tuples:
 $
   (
-    ( mono("0x03"), 1 ),
-    ( mono("0x74"), 1 ),
-    ( mono("0x04"), 2 ),
-    ( mono("0x35"), 2 ),
-    ( mono("0x64"), 4 ),
-    ( mono("0x00"), 5 ),
-    ( mono("0x56"), 1 )
+    (mono("0x03"), 1),
+    (mono("0x74"), 1),
+    (mono("0x1A"), 2),
+    (mono("0x64"), 4),
+    (mono("0x00"), 5),
+    (mono("0x1A"), 1)
   ).
-$<eq:7_byte_chunk_1>
-When encoded back into a byte array, using this algorithm, we would get:
-$
-  (
-    mono("0b00011110"),
-    mono("0x03"),
-    mono("0x74"),
-    mono("0x04"), mono("0x00"),
-    mono("0x35"), mono("0x00"),
-    mono("0x64"), mono("0x02"),
-    mono("0x00"), mono("0x03"),
-    mono("0x56")
-  ).
-$<eq:compressed_bytes_1>
+$ <eq:byte_multiplicity_example_1>
 
-This resulting compressed data is 12 bytes in length, whereas the original
-stream of data was 16 bytes in length. That's a 25% decrease, and thus a
-successful compression.
+For each 2-tuple, the first value is the value of the data byte, and the second
+value is its multiplicity.
 
-You may notice that in the compressed stream of bytes (@eq:compressed_bytes_1)
-that the _multiplicity bytes_ do not match the values found in the corresponding
-7-byte-chunk (@eq:7_byte_chunk_1). In fact, they are all a value of 2 lower
-than what might have been expected. This is because in the header byte, we
-already indicate when a pair of bytes will be present, and this only occurs
-when the byte value has a multiplicity of at least 2. Thus, we can set the
-multiplicity byte to start counting at 2 (represented by the value 0) so that
-we can store a byte with a multiplicity of up to 257 instead of only up to a
-multiplicity of 255; slightly increasing our potential for compression.
+#v(18pt)
 
-=== Worst Case Scenario
-
-For this case of the algorithm to run, the _7-byte-chunk_ must at least have
-one sequential byte with a multiplicity of 3. In the worst case scenario, there
-is one singular byte with a multiplicity of 3, and all other bytes have a
-multiplicity of 1 or 2.
-
-The first byte outputted is the header info byte, this increases the output
-buffer length by 1.
-
-For all the bytes of multiplicity 1, they are not encoded, and their byte is
-simply re-added to the stream at their appropriate index. Thus, for each of
-these bytes, the length of the output remains the same.
-
-For all the bytes of multiplicity 2, they first output the byte of their own
-value, then followed by the byte encoding the quantity of bytes condensed.
-Since two bytes were encoded back into two bytes, the length of the output
-remains the same.
-
-For the singular byte of multiplicity 3, this byte is encoded just the same as
-was done for bytes of multiplicity 2, except the quantity byte has a value of
-\3. Thus, we encoded 3 bytes from the input down to 2 bytes in the output,
-resulting in an output buffer length decrease of 1.
-
-The decrease of 1 byte from the singular multiplicity 3 byte counteracts the
-increase of 1 byte from the header info byte, resulting in a final output
-buffer length equal to that of the input buffer length.
-
-Thus, even in the worse case scenario, this component of the algorithm does not
-produce a compressed data buffer with a length greater than the uncompressed
-data buffer.
-
-
-
-
-
-== Case 2: 2 or Less Sequential Bytes Found<case2>
-
-This case occurs when all the bytes in the _7-byte-chunk_ are of multiplicity
-1 or 2.
-
-Since there are no sequential bytes from the 7-byte-chunk that can be
-compressed by encoding their multiplicity, this sub-algorithm uses the fact
-that every data byte of the source data has values from
-$mono("0x00")$ to only $mono("0x7F")$ to _condense_ the data by removing the unused
-high-order-bit from every data byte. This sub-algorithm becomes more efficient
-when it can condense more bytes at once so it can aggregate all the "saved"
-high-order-bits together into the saving of an entire byte. To do this, after
-meeting the condition for using this sub-algorithm from the contents of the
-_7-byte-chunk_, it will look for additional bytes _past_ those in the
-7-byte-chunk to determine if there are more
-bytes with a multiplicity of less than three that can be encoded into this
-byte set with the desired result of saving an entire byte. Since there are
-only certain multiples of bytes that result in saving whole bytes, the number
-of bytes additionally collected into this encoding are specifically chosen
-and are outlined #link(<tbl:extension_codes>)[below].
-
-
-=== Header Byte
-
-Like case 1, this case also uses a header byte to provide information about the
-following set of bytes. This header byte is a _partial_ header byte, meaning
-that a portion of the bits are used to encode information, and the rest are
-used to store data.
-
-This header byte is encoded as follows:
-#v(1.5em)
-$
-  #let bit(val) = box(width: 8pt, height: 9pt, {
-    place(center + bottom, dy: -0.4pt, if (val == none) [] else [$mono(#str(val))$])
-    place(bottom + center, dy: 1pt, line(length: 5.5pt, stroke: (cap: "round", thickness: 0.9pt)))
-  })
-  mannot.mark(#bit(1), tag: #<b0>, outset: #2pt)
-  overbrace(
-    mannot.mark(#bit(none), tag: #<b1>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b2>, outset: #2pt),
-    #place(center + bottom, text([Extension \ Code]))
-  )
-  mannot.markrect(
-    mannot.mark(#bit(none), tag: #<b3>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b4>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b5>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b6>, outset: #2pt)
-    mannot.mark(#bit(none), tag: #<b7>, outset: #2pt),
-    tag: #<data_bits>,
-    outset: #(x: 0pt, bottom: 3pt, top: 1.4pt),
-    color: #blue,
-  )
-  #mannot.annot(<b0>, dy: 1em, dx: -4.3em, leader-connect: (bottom, right), annot-inset: 1pt)[Compression Type Bit]
-  #mannot.annot(<b1>, dy: -0.4pt)[#text(size: 6.1pt, [$0$])]
-  #mannot.annot(<b2>, dy: -0.4pt)[#text(size: 6.1pt, [$1$])]
-  #mannot.annot(<data_bits>, dy: -3em, dx: 2.6em, leader-connect: (top, left), annot-inset: 1pt)[Data Bits]
-  // #mannot.annot(<b3>, dy: -0.4pt)[#text(size: 6.1pt, [$3$])]
-  // #mannot.annot(<b4>, dy: -0.4pt)[#text(size: 6.1pt, [$4$])]
-  // #mannot.annot(<b5>, dy: -0.4pt)[#text(size: 6.1pt, [$5$])]
-  // #mannot.annot(<b6>, dy: -0.4pt)[#text(size: 6.1pt, [$6$])]
-  // #mannot.annot(<b7>, dy: -0.4pt)[#text(size: 6.1pt, [$7$])]
-$ <eq:case2:headerbyte>
-#v(2em)
-
-The _*Compression Type Bit*_ indicates that the following set of bytes is
-encoded using the _case-2 sub-algorithm_.
-
-The _*Extension Code*_ is the encoding that indicates how many _extra_ bytes
-will be included in this byte set. Since only certain quantities of input bytes
-accumulate to result in saving a whole byte, these encodings map to specific
-values (#link(<tbl:extension_codes>)[see below]).
-
-The _*Data Bits*_ are the initial bits of the compressed bytes from the
-original data. That is, the high order bits of the first byte of the
-7-byte-chunk, excluding the first bit that is uniformly "$mono("0")$" among all
-the source data bytes.
-
-// #v(12pt)
-
-
-==== Extension Codes<tbl:extension_codes>
-#align(center, {
-  set par(justify: false)
+#wrap-content(
   box(
-    width: 90%,
-    table(
-      columns: (3.7em, 3.7em, 3.9em, 4.6em, 5.0em, auto),
-      align: center + horizon,
-      fill: (x, y) => if (y < 2) { rgb("#BBDDD1").lighten(5%) },
+    inset: (y: 0.1em),
+    [
+      #figure(
+        rect(radius: 0.5em, inset: 3.4em, outset: 0em, stroke: 1pt, [
+          #math.equation(
+            $
+              #let bit(val) = box(width: 9pt, height: 9pt, {
+                place(center + bottom, dy: -0.4pt, if (val == none) [] else [$mono(#str(val))$])
+                place(bottom + center, dy: 1pt, line(length: 5.5pt, stroke: (cap: "round", thickness: 0.9pt)))
+              })
+              mannot.markrect(
+                #bit(1), tag: #<b0>,
+                outset: #(x: -0.6pt, bottom: 3pt, top: 1.4pt),
+                color: #(orange).darken(10%),
+              )
+              mannot.markrect(
+                #bit(none)
+                #bit(none)
+                #bit(none)
+                #bit(none)
+                #bit(none)
+                #bit(none)
+                #bit(none),
+                tag: #<data_bits>,
+                outset: #(x: -0.6pt, bottom: 3pt, top: 1.4pt),
+                color: #blue,
+              )
+              #mannot.annot(<b0>, dy: 2em, leader-connect: (bottom, top), annot-inset: 1pt)[
+                #set align(center)
+                Multiplicity \ Indicator
+              ]
+              #mannot.annot(<data_bits>, dy: -3em, dx: 2.6em, leader-connect: (top, left), annot-inset: 1pt)[Data Bits]
+            $,
+          )
+          #v(2em)
+        ]),
+        caption: [Encoded Data Byte],
+      )<eq:encoded_data_byte>
+    ],
+  ),
+  [
 
-      table.header(
-        level: 1,
-        table.cell([Extension Code], colspan: 2),
-        table.cell([\# Input Bytes], rowspan: 2),
-        table.cell([\# Output Bytes], rowspan: 2),
-        table.cell([Trailing Spare Bits], rowspan: 2),
-        table.cell([Explanation], rowspan: 2),
-        [Bit 0],
-        [Bit 1],
+    From here, the algorithm utilized the fact that the values for each data
+    byte only range from $mono("0x00")$ to $mono("0x7F")$ and all have the same
+    value for the top high-order-bit of their byte: "$mono("0")$".
+
+    For each byte-instance in the array of 2-tuples, the encoding differs
+    depending on whether the byte-instance has a multiplicity equal to 1, or a
+    multiplicity equal to 2 or greater. In both cases, the 7 low-order bits of
+    the data-byte are encoded into the matching 7 low-order bits of the
+    encoded-data-byte. Now, if the multiplicity of the byte instance is equal
+    to 1, then the _multiplicity indicator_ bit is set to "$mono("0")$" and the
+    encoding is complete. Alternatively, if the multiplicity of the
+    byte-instance is equal to 2 or greater, then the _multiplicity indicator_
+    bit is set to "$mono("1")$" and the encoded-byte is written. In the
+    _following_ byte, the value of the multiplicity for this byte-instance is
+    written, where a value of $mono("0x00")$ encodes a multiplicity of 2, and
+    $mono("0xFF")$ encodes a multiplicity of 257. Writing this
+    value-multiplicity byte pair completes the encoding for this second case.
+
+  ],
+  align: top + right,
+  column-gutter: 1.5em,
+)
+
+Since a value-multiplicity pair is only written when a given byte-instance has
+a multiplicity greater than 1, the addition of the extra byte to encode the
+multiplicity will never replace what was a single byte from the original data
+with the pair of bytes, it will only ever replace sequences of the same byte
+repeated twice or more with the pair. This insures that in the worst case
+scenario --- where no byte in the input data is ever found more than twice in a
+row --- the resulting compressed data buffer will not be of greater length than
+the source data buffer. Thus, this satisfies our second goal.
+
+= Example
+
+Consider the following inputted array of bytes:
+
+$
+  ( quad & mono("0x03"), mono("0x74"), mono("0x04"), mono("0x04"), quad &
+    & mono("0x04"), mono("0x35"), mono("0x35"), mono("0x64"), quad &
+    & mono("0x64"), mono("0x64"), mono("0x64"), mono("0x00"), \
+    & mono("0x00"), mono("0x00"), mono("0x00"), mono("0x00"), quad &
+    & mono("0x56"), mono("0x45"), mono("0x56"), mono("0x56"), quad &
+    & mono("0x56"), mono("0x09"), mono("0x09"), mono("0x09") & quad ).
+$ <eq:main_example_stream>
+
+This would become the array of value-multiplicity 2-tuples:
+$
+  ( quad & (mono("0x03"), 1),
+           (mono("0x74"), 1),
+           (mono("0x04"), 3),
+           (mono("0x35"), 2),
+           (mono("0x64"), 4), &        \
+         & (mono("0x00"), 5),
+           (mono("0x56"), 1),
+           (mono("0x45"), 1),
+           (mono("0x56"), 3),
+           (mono("0x09"), 3)  & quad).
+$ <eq:main_example_2_tuples>
+
+By performing the compression algorithm, we get:
+$
+  ( quad & mono("0x03"), mono("0x03"),
+           mono("0x74"), mono("0x74"),
+           mono("0x04"), mono("0x04"),
+           mono("0x35"), mono("0x35"),
+           mono("0x64"), mono("0x64"), &        \
+         & mono("0x00"), mono("0x00"),
+           mono("0x56"), mono("0x56"),
+           mono("0x45"), mono("0x45"),
+           mono("0x56"), mono("0x56"),
+           mono("0x09"), mono("0x09")  & quad).
+$ <eq:main_example_2_tuples>
+
+
+It can be pretty hard to read byte-by-byte and try to discern the changes. To
+make it easier, here is a diagram that represents the process followed by the
+algorithm for this example:
+
+#align(center, figure(
+  caption: [Algorithm Example],
+  rect(radius: 10pt, stroke: 0.75pt, inset: 12pt, scale(94%, reflow: true, [
+    #let value_color = blue.darken(15%)
+    #let multi_color = red.darken(20%)
+    #let gold = rgb("#D4AF37")
+
+    #let bit(val, highlight: none) = box(width: 9pt, height: 9pt, {
+      place(center + bottom, dy: -0.4pt, if (
+        val == none
+      ) [] else [$mono(#str(val))$])
+      place(bottom + center, dy: 1pt, line(length: 5.5pt, stroke: (
+        cap: "round",
+        thickness: 0.9pt,
+      )))
+      if (highlight != none) {
+        place(bottom + center, dy: 2.4pt, rect(
+          stroke: highlight + 0.8pt,
+          height: 100% + 2pt,
+          width: 85%,
+          radius: 1pt,
+        ))
+      }
+    })
+
+    #let byte_node(pos, byte, ..args) = node(
+      pos,
+      rect($mono("0x"#(if byte < 0x10 { 0 })#str(byte, base: 16))$),
+      inset: 0pt,
+      outset: 2pt,
+      ..args,
+    )
+
+    #let bit_node(pos, byte, highlight_top_bit: none, ..args) = node(
+      pos,
+      rect(
+        math.equation(
+          for i in range(8) {
+            bit(
+              byte.bit-rshift(7 - i, logical: false).bit-and(1),
+              highlight: if (
+                i == 0
+              ) { highlight_top_bit } else { none },
+            )
+          },
+        ),
+      ),
+      inset: 0pt,
+      outset: 2pt,
+      ..args,
+    )
+
+    #let tuple_node(pos, byte, multiplicity, ..args) = node(
+      pos,
+      scale(
+        140%,
+        $vec(text(fill: #value_color, mono(byte)), text(fill: #multi_color, #str(multiplicity)))$,
+        reflow: true,
+      ),
+      fill: none,
+      ..args,
+    )
+
+    #let curvy_edge(start, end, bend: 10deg, ..args) = {
+      edge(start, ((), 50%, end), "-", bend: -1 * bend, stroke: value_color)
+      edge((start, 50%, end), end, "->", bend: bend, stroke: value_color)
+    }
+
+    #diagram(
+      spacing: (2em, 0.5em),
+      node-fill: white,
+
+      byte_node((0, 00), 0x03, name: <byte00>),
+      byte_node((0, 01), 0x74, name: <byte01>),
+      byte_node((0, 02), 0x04, name: <byte02>),
+      byte_node((0, 03), 0x04, name: <byte03>),
+      byte_node((0, 04), 0x04, name: <byte04>),
+      byte_node((0, 05), 0x35, name: <byte05>),
+      byte_node((0, 06), 0x35, name: <byte06>),
+      byte_node((0, 07), 0x64, name: <byte07>),
+      byte_node((0, 08), 0x64, name: <byte08>),
+      byte_node((0, 09), 0x64, name: <byte09>),
+      byte_node((0, 10), 0x64, name: <byte10>),
+      byte_node((0, 11), 0x00, name: <byte11>),
+      byte_node((0, 12), 0x00, name: <byte12>),
+      byte_node((0, 13), 0x00, name: <byte13>),
+      byte_node((0, 14), 0x00, name: <byte14>),
+      byte_node((0, 15), 0x00, name: <byte15>),
+      byte_node((0, 16), 0x56, name: <byte16>),
+      byte_node((0, 17), 0x45, name: <byte17>),
+      byte_node((0, 18), 0x56, name: <byte18>),
+      byte_node((0, 19), 0x56, name: <byte19>),
+      byte_node((0, 20), 0x56, name: <byte20>),
+      byte_node((0, 21), 0x09, name: <byte21>),
+      byte_node((0, 22), 0x09, name: <byte22>),
+      byte_node((0, 23), 0x09, name: <byte23>),
+
+
+      // Input Bits.
+      bit_node((1, 00), 0x03, name: <b00>),
+      bit_node((1, 01), 0x74, name: <b01>),
+      bit_node((1, 02), 0x04, name: <b02>),
+      bit_node((1, 03), 0x04, name: <b03>),
+      bit_node((1, 04), 0x04, name: <b04>),
+      bit_node((1, 05), 0x35, name: <b05>),
+      bit_node((1, 06), 0x35, name: <b06>),
+      bit_node((1, 07), 0x64, name: <b07>),
+      bit_node((1, 08), 0x64, name: <b08>),
+      bit_node((1, 09), 0x64, name: <b09>),
+      bit_node((1, 10), 0x64, name: <b10>),
+      bit_node((1, 11), 0x00, name: <b11>),
+      bit_node((1, 12), 0x00, name: <b12>),
+      bit_node((1, 13), 0x00, name: <b13>),
+      bit_node((1, 14), 0x00, name: <b14>),
+      bit_node((1, 15), 0x00, name: <b15>),
+      bit_node((1, 16), 0x56, name: <b16>),
+      bit_node((1, 17), 0x45, name: <b17>),
+      bit_node((1, 18), 0x56, name: <b18>),
+      bit_node((1, 19), 0x56, name: <b19>),
+      bit_node((1, 20), 0x56, name: <b20>),
+      bit_node((1, 21), 0x09, name: <b21>),
+      bit_node((1, 22), 0x09, name: <b22>),
+      bit_node((1, 23), 0x09, name: <b23>),
+
+
+      // Value-Multiplicity Pairs
+      tuple_node((3, 0), "0x03", 1, name: <t0>),
+      tuple_node((3, 1), "0x74", 1, name: <t1>),
+      tuple_node((3, 3), "0x04", 3, name: <t2>),
+      tuple_node((3, 5.5), "0x35", 2, name: <t3>),
+      tuple_node((3, 8.5), "0x64", 4, name: <t4>),
+      tuple_node((3, 13), "0x00", 5, name: <t5>),
+      tuple_node((3, 15), "0x56", 1, name: <t6>),
+      tuple_node((3, 17), "0x45", 1, name: <t7>),
+      tuple_node((3, 19), "0x56", 3, name: <t8>),
+      tuple_node((3, 22), "0x09", 3, name: <t9>),
+
+      // Output Bits.
+      bit_node((5, 00), 0x03, name: <cb0v>),
+      // bit_node((6, 01), 0x01, name: <cb0m>),
+      bit_node((5, 01), 0x74, name: <cb1v>),
+      // bit_node((6, 03), 0x01, name: <cb1m>),
+      bit_node(
+        (5, 02),
+        0x04 + 0x80,
+        name: <cb2v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 03), 0x03, name: <cb2m>),
+      bit_node(
+        (5, 05),
+        0x35 + 0x80,
+        name: <cb3v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 06), 0x02, name: <cb3m>),
+      bit_node(
+        (5, 08),
+        0x64 + 0x80,
+        name: <cb4v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 09), 0x04, name: <cb4m>),
+      bit_node(
+        (5, 10),
+        0x00 + 0x80,
+        name: <cb5v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 11), 0x05, name: <cb5m>),
+      bit_node((5, 12), 0x56, name: <cb6v>),
+      // bit_node((6, 13), 0x01, name: <cb6m>),
+      bit_node((5, 14), 0x45, name: <cb7v>),
+      // bit_node((6, 15), 0x01, name: <cb7m>),
+      bit_node(
+        (5, 16),
+        0x56 + 0x80,
+        name: <cb8v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 17), 0x03, name: <cb8m>),
+      bit_node(
+        (5, 18),
+        0x09 + 0x80,
+        name: <cb9v>,
+        highlight_top_bit: multi_color,
+      ),
+      bit_node((5, 19), 0x03, name: <cb9m>),
+
+      // Output Bytes.
+      byte_node((6, 00), 0x03, name: <c0v>),
+      // byte_node((8, 01), 0x01, name: <c0m>),
+      byte_node((6, 01), 0x74, name: <c1v>),
+      // byte_node((8, 03), 0x01, name: <c1m>),
+      byte_node((6, 02), 0x04 + 0x80, name: <c2v>),
+      byte_node((6, 03), 0x03, name: <c2m>),
+      byte_node((6, 04), 0x35 + 0x80, name: <c3v>),
+      byte_node((6, 05), 0x02, name: <c3m>),
+      byte_node((6, 06), 0x64 + 0x80, name: <c4v>),
+      byte_node((6, 07), 0x04, name: <c4m>),
+      byte_node((6, 08), 0x00 + 0x80, name: <c5v>),
+      byte_node((6, 09), 0x05, name: <c5m>),
+      byte_node((6, 10), 0x56, name: <c6v>),
+      // byte_node((8, 13), 0x01, name: <c6m>),
+      byte_node((6, 11), 0x45, name: <c7v>),
+      // byte_node((8, 15), 0x01, name: <c7m>),
+      byte_node((6, 12), 0x56 + 0x80, name: <c8v>),
+      byte_node((6, 13), 0x03, name: <c8m>),
+      byte_node((6, 14), 0x09 + 0x80, name: <c9v>),
+      byte_node((6, 15), 0x03, name: <c9m>),
+
+
+      // Groups.
+      node((to: <byte00>, rel: (0, -3)), []),
+      node(
+        enclose: ((to: <byte00>, rel: (0, -3)), <byte23>),
+        label: align(top + center, text(
+          teal.darken(12%),
+          size: 11pt,
+        )[Input Bytes]),
+        stroke: teal,
+        fill: teal.lighten(90%),
       ),
 
-      [$mono("0")$],
-      [$mono("0")$],
-      [7],
-      [7],
-      [4],
-      [
-        This is the default encoding. This is the encoding that insures that
-        this algorithm does not increase the number of bytes in the resulting
-        output buffer compared to the length of the input buffer.
-      ],
+      node((to: <t0>, rel: (0, -3)), []),
+      node(
+        enclose: ((to: <t0>, rel: (0, -3)), <t9>),
+        label: align(top + center, text(
+          purple.darken(12%),
+          size: 11pt,
+        )[2-Tuples]),
+        stroke: purple,
+        fill: purple.lighten(93%),
+      ),
 
-      [$mono("0")$],
-      [$mono("1")$],
-      [11],
-      [10],
-      [0],
-      [
-        This is the number of input bytes required to save *1* whole byte in the
-        output.
-      ],
+      node((to: <c0v>, rel: (0, -3)), []),
+      node(
+        enclose: ((to: <c0v>, rel: (0, -3)), <c9m>),
+        label: align(top + center, text(
+          gold.darken(12%),
+          size: 11pt,
+        )[Encoded Bytes]),
+        stroke: gold,
+        fill: gold.lighten(90%),
+      ),
 
-      [$mono("1")$],
-      [$mono("0")$],
-      [18],
-      [16],
-      [0],
-      [
-        This is the number of input bytes required to save *2* whole bytes in the
-        output.
-      ],
+      // Edges.
+      edge(<byte00>, <b00>, "->"),
+      edge(<byte01>, <b01>, "->"),
+      edge(<byte02>, <b02>, "->"),
+      edge(<byte03>, <b03>, "->"),
+      edge(<byte04>, <b04>, "->"),
+      edge(<byte05>, <b05>, "->"),
+      edge(<byte06>, <b06>, "->"),
+      edge(<byte07>, <b07>, "->"),
+      edge(<byte08>, <b08>, "->"),
+      edge(<byte09>, <b09>, "->"),
+      edge(<byte10>, <b10>, "->"),
+      edge(<byte11>, <b11>, "->"),
+      edge(<byte12>, <b12>, "->"),
+      edge(<byte13>, <b13>, "->"),
+      edge(<byte14>, <b14>, "->"),
+      edge(<byte15>, <b15>, "->"),
+      edge(<byte16>, <b16>, "->"),
+      edge(<byte17>, <b17>, "->"),
+      edge(<byte18>, <b18>, "->"),
+      edge(<byte19>, <b19>, "->"),
+      edge(<byte20>, <b20>, "->"),
+      edge(<byte21>, <b21>, "->"),
+      edge(<byte22>, <b22>, "->"),
+      edge(<byte23>, <b23>, "->"),
 
-      [$mono("1")$],
-      [$mono("1")$],
-      [25],
-      [22],
-      [0],
-      [
-        This is the number of input bytes required to save *3* whole bytes in the
-        output.
-      ],
-    ),
-  )
-})
+      edge(<b00.east>, <t0>, "->"),
+      edge(<b01.east>, <t1>, "->"),
+      edge(<b02.east>, <t2>, "->"),
+      edge(<b03.east>, <t2>, "->"),
+      edge(<b04.east>, <t2>, "->"),
+      edge(<b05.east>, <t3>, "->"),
+      edge(<b06.east>, <t3>, "->"),
+      edge(<b07.east>, <t4>, "->"),
+      edge(<b08.east>, <t4>, "->"),
+      edge(<b09.east>, <t4>, "->"),
+      edge(<b10.east>, <t4>, "->"),
+      edge(<b11.east>, <t5>, "->"),
+      edge(<b12.east>, <t5>, "->"),
+      edge(<b13.east>, <t5>, "->"),
+      edge(<b14.east>, <t5>, "->"),
+      edge(<b15.east>, <t5>, "->"),
+      edge(<b16.east>, <t6>, "->"),
+      edge(<b17.east>, <t7>, "->"),
+      edge(<b18.east>, <t8>, "->"),
+      edge(<b19.east>, <t8>, "->"),
+      edge(<b20.east>, <t8>, "->"),
+      edge(<b21.east>, <t9>, "->"),
+      edge(<b22.east>, <t9>, "->"),
+      edge(<b23.east>, <t9>, "->"),
 
+      edge(<t0>, <cb0v.west>, "->", stroke: value_color),
+      // edge(<t0>, <cb0m.west>, "->", stroke: multi_color),
+      edge(<t1>, <cb1v.west>, "->", stroke: value_color),
+      // edge(<t1>, <cb1m.west>, "->", stroke: multi_color),
+      edge(<t2>, <cb2v.west>, "->", stroke: value_color),
+      edge(<t2>, <cb2m.west>, "->", stroke: multi_color),
+      edge(<t3>, <cb3v.west>, "->", stroke: value_color),
+      edge(<t3>, <cb3m.west>, "->", stroke: multi_color),
+      edge(<t4>, <cb4v.west>, "->", stroke: value_color),
+      edge(<t4>, <cb4m.west>, "->", stroke: multi_color),
+      edge(<t5>, <cb5v.west>, "->", stroke: value_color),
+      edge(<t5>, <cb5m.west>, "->", stroke: multi_color),
+      edge(<t6>, <cb6v.west>, "->", stroke: value_color),
+      // edge(<t6>, <cb6m.west>, "->", stroke: multi_color),
+      edge(<t7>, <cb7v.west>, "->", stroke: value_color),
+      // edge(<t7>, <cb7m.west>, "->", stroke: multi_color),
+      edge(<t8>, <cb8v.west>, "->", stroke: value_color),
+      edge(<t8>, <cb8m.west>, "->", stroke: multi_color),
+      edge(<t9>, <cb9v.west>, "->", stroke: value_color),
+      edge(<t9>, <cb9m.west>, "->", stroke: multi_color),
 
-=== Encoding Example
-
-==== Example 1
-
-Consider the input byte array of
-$
-   ( quad & \
-          & mono("0x03"), mono("0x74"), mono("0x04"), mono("0x1A"), \
-          & mono("0x1A"), mono("0x35"), mono("0x64"), mono("0x00"), \
-  ). quad &
-$ <eq:stream_example_6>
-
-From this, the first _7-byte-chunk_ of 2-tuples (_value_, _multiplicity_) would be
-constructed as:
-$
-  (
-    ( mono("0x03"), 1 ),
-    ( mono("0x74"), 1 ),
-    ( mono("0x04"), 1 ),
-    ( mono("0x1A"), 2 ),
-    ( mono("0x35"), 1 ),
-    ( mono("0x64"), 1 ),
-    ( mono("0x00"), 5 ),
-    ( mono("0x56"), 1 )
-  ).
-$<eq:7_byte_chunk_2>
-
-Since no byte instance of the _7-byte-chunk_ (@eq:7_byte_chunk_2) has a
-multiplicity of 3 or greater, this byte set qualifies for this case.
-
-==== Example 2
-
-
-$
-   ( quad & \
-          & mono("0x03"), mono("0x74"), mono("0x04"), mono("0x1A"), \
-          & mono("0x1A"), mono("0x35"), mono("0x64"), mono("0x00"), \
-          & mono("0x35"), mono("0x35"), mono("0x56"), mono("0x0C"), \
-          & mono("0x1B"), mono("0x1B"), mono("0x1B"), mono("0x0C"), \
-          & mono("0x1B") \
-  ). quad &
-$ <eq:stream_example_7>
-
-
-
-
-
+      edge(<cb0v.east>, <c0v.west>, "->", stroke: value_color),
+      // edge(<cb0m>, <c0m>, "->", stroke: multi_color),
+      edge(<cb1v.east>, <c1v.west>, "->", stroke: value_color),
+      // edge(<cb1m>, <c1m>, "->", stroke: multi_color),
+      edge(<cb2v.east>, <c2v.west>, "->", stroke: value_color),
+      edge(<cb2m.east>, <c2m.west>, "->", stroke: multi_color),
+      edge(<cb3v.east>, <c3v.west>, "->", stroke: value_color),
+      edge(<cb3m.east>, <c3m.west>, "->", stroke: multi_color),
+      edge(<cb4v.east>, <c4v.west>, "->", stroke: value_color),
+      edge(<cb4m.east>, <c4m.west>, "->", stroke: multi_color),
+      edge(<cb5v.east>, <c5v.west>, "->", stroke: value_color),
+      edge(<cb5m.east>, <c5m.west>, "->", stroke: multi_color),
+      edge(<cb6v.east>, <c6v.west>, "->", stroke: value_color),
+      // edge(<cb6m>, <c6m>, "->", stroke: multi_color),
+      edge(<cb7v.east>, <c7v.west>, "->", stroke: value_color),
+      // edge(<cb7m>, <c7m>, "->", stroke: multi_color),
+      edge(<cb8v.east>, <c8v.west>, "->", stroke: value_color),
+      edge(<cb8m.east>, <c8m.west>, "->", stroke: multi_color),
+      edge(<cb9v.east>, <c9v.west>, "->", stroke: value_color),
+      edge(<cb9m.east>, <c9m.west>, "->", stroke: value_color),
+    )
+  ])),
+))
 
