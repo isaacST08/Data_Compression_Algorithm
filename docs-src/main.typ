@@ -125,6 +125,10 @@ byte into a pair of values: The value of the byte itself, and the number of
 times that byte appeared in a row --- its _multiplicity_. If the same byte
 appears multiple times but is separated by one or more bytes of a different
 value, then those same-bytes are treated as different _instances_ of that byte.
+However, due to the method of encoding described below, once a byte-instance
+reaches a multiplicity of 257, that instance is considered full and any
+remaining sequential bytes will need to be collected inside the next
+byte-instance.
 
 For example, consider the following input data buffer:
 $
@@ -425,28 +429,28 @@ algorithm for this example:
         name: <cb2v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 03), 0x03, name: <cb2m>),
+      bit_node((5, 03), 0x03 - 2, name: <cb2m>),
       bit_node(
         (5, 05),
         0x35 + 0x80,
         name: <cb3v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 06), 0x02, name: <cb3m>),
+      bit_node((5, 06), 0x02 - 2, name: <cb3m>),
       bit_node(
         (5, 08),
         0x64 + 0x80,
         name: <cb4v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 09), 0x04, name: <cb4m>),
+      bit_node((5, 09), 0x04 - 2, name: <cb4m>),
       bit_node(
         (5, 10),
         0x00 + 0x80,
         name: <cb5v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 11), 0x05, name: <cb5m>),
+      bit_node((5, 11), 0x05 - 2, name: <cb5m>),
       bit_node((5, 12), 0x56, name: <cb6v>),
       // bit_node((6, 13), 0x01, name: <cb6m>),
       bit_node((5, 14), 0x45, name: <cb7v>),
@@ -457,14 +461,14 @@ algorithm for this example:
         name: <cb8v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 17), 0x03, name: <cb8m>),
+      bit_node((5, 17), 0x03 - 2, name: <cb8m>),
       bit_node(
         (5, 18),
         0x09 + 0x80,
         name: <cb9v>,
         highlight_top_bit: multi_color,
       ),
-      bit_node((5, 19), 0x03, name: <cb9m>),
+      bit_node((5, 19), 0x03 - 2, name: <cb9m>),
 
       // Output Bytes.
       byte_node((6, 00), 0x03, name: <c0v>),
@@ -472,21 +476,21 @@ algorithm for this example:
       byte_node((6, 01), 0x74, name: <c1v>),
       // byte_node((8, 03), 0x01, name: <c1m>),
       byte_node((6, 02), 0x04 + 0x80, name: <c2v>),
-      byte_node((6, 03), 0x03, name: <c2m>),
+      byte_node((6, 03), 0x03 - 2, name: <c2m>),
       byte_node((6, 04), 0x35 + 0x80, name: <c3v>),
-      byte_node((6, 05), 0x02, name: <c3m>),
+      byte_node((6, 05), 0x02 - 2, name: <c3m>),
       byte_node((6, 06), 0x64 + 0x80, name: <c4v>),
-      byte_node((6, 07), 0x04, name: <c4m>),
+      byte_node((6, 07), 0x04 - 2, name: <c4m>),
       byte_node((6, 08), 0x00 + 0x80, name: <c5v>),
-      byte_node((6, 09), 0x05, name: <c5m>),
+      byte_node((6, 09), 0x05 - 2, name: <c5m>),
       byte_node((6, 10), 0x56, name: <c6v>),
       // byte_node((8, 13), 0x01, name: <c6m>),
       byte_node((6, 11), 0x45, name: <c7v>),
       // byte_node((8, 15), 0x01, name: <c7m>),
       byte_node((6, 12), 0x56 + 0x80, name: <c8v>),
-      byte_node((6, 13), 0x03, name: <c8m>),
+      byte_node((6, 13), 0x03 - 2, name: <c8m>),
       byte_node((6, 14), 0x09 + 0x80, name: <c9v>),
-      byte_node((6, 15), 0x03, name: <c9m>),
+      byte_node((6, 15), 0x03 - 2, name: <c9m>),
 
 
       // Groups.
