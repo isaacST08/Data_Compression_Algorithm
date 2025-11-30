@@ -230,7 +230,7 @@ Since a value-multiplicity pair is only written when a given byte-instance has
 a multiplicity greater than 1, the addition of the extra byte to encode the
 multiplicity will never replace what was a single byte from the original data
 with the pair of bytes, it will only ever replace sequences of the same byte
-repeated twice or more with the pair. This insures that in the worst case
+repeated twice or more with the pair. This ensures that in the worst case
 scenario --- where no byte in the input data is ever found more than twice in a
 row --- the resulting compressed data buffer will not be of greater length than
 the source data buffer. Thus, this satisfies our second goal.
